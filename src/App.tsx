@@ -28,6 +28,11 @@ import {
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { createClient } from '@supabase/supabase-js';
+import { Document, Page, pdfjs } from 'react-pdf';
+import 'react-pdf/dist/Page/AnnotationLayer.css';
+import 'react-pdf/dist/Page/TextLayer.css';
+
+pdfjs.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjs.version}/pdf.worker.min.mjs`;
 
 // --- Supabase Client ---
 const SUPABASE_URL = "https://tduemvjrybtswpzxosig.supabase.co";
@@ -169,6 +174,123 @@ const DEFAULT_DATA: ResumeData = {
 };
 
 // --- Components ---
+
+function PDFRenderer({ url }: { url: string }) {
+  const [numPages, setNumPages] = useState<number>();
+  const [pageNumber, setPageNumber] = useState(1);
+  const [scale, setScale] = useState(1.2);
+  const [loadError, setLoadError] = useState(false);
+  const [useFallback, setUseFallback] = useState(false);
+
+  function onDocumentLoadSuccess({ numPages }: { numPages: number }) {
+    setNumPages(numPages);
+    setPageNumber(1);
+    setLoadError(false);
+  }
+
+  // Use Microsoft Office Online as a domestic-friendly fallback that bypasses client-side CORS
+  const microsoftViewerUrl = `https://view.officeapps.live.com/op/view.aspx?src=${encodeURIComponent(url)}`;
+
+  if (useFallback) {
+    return (
+      <div className="w-full h-full flex flex-col">
+        <div className="p-2 bg-blue-50 border-b border-blue-100 flex items-center justify-between px-6">
+          <span className="text-xs text-blue-600 font-medium">✨ 已切换至“兼容模式” (微软在线预览)</span>
+          <button 
+            onClick={() => setUseFallback(false)}
+            className="text-xs text-blue-500 hover:text-blue-700 underline font-bold"
+          >
+            尝试原生渲染
+          </button>
+        </div>
+        <iframe 
+          src={microsoftViewerUrl} 
+          className="w-full h-full border-none bg-white"
+          title="Microsoft Online PDF Viewer"
+        />
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex flex-col items-center w-full h-full text-center overflow-auto bg-gray-200">
+      <div className="sticky top-0 z-20 flex items-center justify-center gap-4 py-3 bg-white/80 backdrop-blur-md w-full shadow-sm">
+        <button 
+          disabled={pageNumber <= 1} 
+          onClick={() => setPageNumber(prev => Math.max(prev - 1, 1))}
+          className="px-3 py-1 bg-gray-100 rounded text-sm hover:bg-gray-200 disabled:opacity-50"
+        >
+          上一页
+        </button>
+        <span className="text-sm font-medium text-gray-700">
+          第 {pageNumber} / {numPages || '--'} 页
+        </span>
+        <button 
+          disabled={numPages === undefined || pageNumber >= numPages} 
+          onClick={() => setPageNumber(prev => Math.min(prev + 1, numPages || 1))}
+          className="px-3 py-1 bg-gray-100 rounded text-sm hover:bg-gray-200 disabled:opacity-50"
+        >
+          下一页
+        </button>
+        
+        <div className="w-px h-6 bg-gray-300 mx-2" />
+        
+        <button onClick={() => setScale(s => Math.max(s - 0.2, 0.5))} className="px-2 py-1 text-gray-600 hover:bg-gray-100 rounded">-</button>
+        <span className="text-xs text-gray-500 w-12">{Math.round(scale * 100)}%</span>
+        <button onClick={() => setScale(s => Math.min(s + 0.2, 3))} className="px-2 py-1 text-gray-600 hover:bg-gray-100 rounded">+</button>
+      </div>
+
+      <div className="flex-1 overflow-auto w-full flex justify-center py-6 px-4">
+        <Document 
+          file={url} 
+          onLoadSuccess={onDocumentLoadSuccess}
+          onLoadError={() => setLoadError(true)}
+          loading={
+            <div className="text-gray-400 mt-20 animate-pulse flex flex-col items-center">
+              <div className="w-10 h-10 border-4 border-blue-200 border-t-blue-500 rounded-full animate-spin mb-4" />
+              正在渲染 PDF...
+            </div>
+          }
+          error={
+            <div className="flex flex-col items-center justify-center mt-20 p-8 space-y-6 max-w-md mx-auto">
+              <div className="p-4 bg-red-50 text-red-500 rounded-2xl">
+                 <FileText size={48} />
+              </div>
+              <div className="space-y-2">
+                <h3 className="text-lg font-bold text-gray-900 leading-tight">无法直接加载 PDF 资源</h3>
+                <p className="text-sm text-gray-500">可能是由于跨域限制 (CORS) 或本地网络环境阻断了 PDF 二进制流。您可以尝试以下方式：</p>
+              </div>
+              <div className="w-full flex flex-col gap-3">
+                <button 
+                  onClick={() => setUseFallback(true)}
+                  className="w-full py-3 bg-blue-600 text-white rounded-xl text-sm font-bold shadow-lg shadow-blue-500/25 hover:bg-blue-700 transition"
+                >
+                  🚀 切换至国内优化预览模式
+                </button>
+                <a 
+                  href={url} 
+                  target="_blank" 
+                  rel="noopener noreferrer"
+                  className="w-full py-3 bg-gray-100 text-gray-600 rounded-xl text-sm font-bold hover:bg-gray-200 transition"
+                >
+                  在新窗口中直接打开
+                </a>
+              </div>
+            </div>
+          }
+        >
+          <Page 
+            pageNumber={pageNumber} 
+            scale={scale} 
+            renderTextLayer={false} 
+            renderAnnotationLayer={false} 
+            className="shadow-2xl rounded-sm overflow-hidden bg-white"
+          />
+        </Document>
+      </div>
+    </div>
+  );
+}
 
 export default function App() {
   console.log('App component is rendering');
@@ -1281,26 +1403,9 @@ export default function App() {
                   </button>
                 </div>
               </div>
-              <div className="flex-1 bg-gray-100 relative">
+              <div className="flex-1 bg-gray-100 relative overflow-hidden flex flex-col">
                 {previewFile.type === 'pdf' ? (
-                  <div className="w-full h-full relative">
-                    <iframe 
-                      src={`${previewFile.url}#toolbar=0&navpanes=0`} 
-                      className="w-full h-full border-none"
-                      title="PDF Preview"
-                    />
-                    {/* Fallback button for some network environments or previous files lacking content-type */}
-                    <div className="absolute bottom-4 right-4 z-10 flex flex-col gap-2">
-                       <a 
-                         href={previewFile.url} 
-                         target="_blank" 
-                         rel="noopener noreferrer"
-                         className="px-4 py-2 bg-blue-600 text-white rounded-full text-xs font-bold shadow-lg shadow-blue-500/30 hover:bg-blue-700 transition flex items-center justify-center"
-                       >
-                         在新窗口中打开
-                       </a>
-                    </div>
-                  </div>
+                  <PDFRenderer url={previewFile.url} />
                 ) : (
                   <div className="w-full h-full flex flex-col items-center justify-center p-12 text-center space-y-4">
                     <div className="w-20 h-20 bg-green-50 text-green-600 rounded-3xl flex items-center justify-center">
