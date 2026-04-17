@@ -32,7 +32,7 @@ import { Document, Page, pdfjs } from 'react-pdf';
 import 'react-pdf/dist/Page/AnnotationLayer.css';
 import 'react-pdf/dist/Page/TextLayer.css';
 
-pdfjs.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjs.version}/pdf.worker.min.mjs`;
+pdfjs.GlobalWorkerOptions.workerSrc = `https://npm.elemecdn.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.mjs`;
 
 // --- Supabase Client ---
 const SUPABASE_URL = "https://tduemvjrybtswpzxosig.supabase.co";
@@ -180,20 +180,30 @@ function PDFRenderer({ url }: { url: string }) {
   const [pageNumber, setPageNumber] = useState(1);
   const [scale, setScale] = useState(1.0);
   const [pdfBlob, setPdfBlob] = useState<Blob | null>(null);
+  const [objectUrl, setObjectUrl] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [renderError, setRenderError] = useState(false);
   const [containerWidth, setContainerWidth] = useState<number>(0);
   const containerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
+    let currentUrl: string | null = null;
     async function fetchPdf() {
       try {
         setLoading(true);
         setError(null);
+        setRenderError(false);
         const response = await fetch(url);
         if (!response.ok) throw new Error('同步云端资源失败');
         const blob = await response.blob();
-        setPdfBlob(blob);
+        
+        // Create a blob URL that can be used by both react-pdf and iframe
+        const pdfBlobData = new Blob([blob], { type: 'application/pdf' });
+        currentUrl = URL.createObjectURL(pdfBlobData);
+        
+        setPdfBlob(pdfBlobData);
+        setObjectUrl(currentUrl);
       } catch (err: any) {
         console.error("PDF Fetch Error:", err);
         setError(err.message || '加载失败');
@@ -202,6 +212,10 @@ function PDFRenderer({ url }: { url: string }) {
       }
     }
     fetchPdf();
+    
+    return () => {
+      if (currentUrl) URL.revokeObjectURL(currentUrl);
+    };
   }, [url]);
 
   useEffect(() => {
@@ -218,6 +232,12 @@ function PDFRenderer({ url }: { url: string }) {
   function onDocumentLoadSuccess({ numPages }: { numPages: number }) {
     setNumPages(numPages);
     setPageNumber(1);
+    setRenderError(false);
+  }
+
+  function onDocumentLoadError(err: any) {
+    console.error("PDF Render Error:", err);
+    setRenderError(true);
   }
 
   if (loading) {
@@ -230,7 +250,7 @@ function PDFRenderer({ url }: { url: string }) {
         />
         <div className="space-y-2">
           <p className="text-gray-900 font-bold text-sm tracking-widest">正在安全调取云端资源</p>
-          <p className="text-gray-400 text-[10px] uppercase tracking-widest">已开启手机端专用兼容模式 (无感加载中)</p>
+          <p className="text-gray-400 text-[10px] uppercase tracking-widest text-center">已开启国内/内网专用加速模式</p>
         </div>
       </div>
     );
@@ -239,11 +259,11 @@ function PDFRenderer({ url }: { url: string }) {
   if (error || !pdfBlob) {
     return (
       <div className="flex flex-col items-center justify-center h-full p-12 text-center bg-white">
-        <div className="w-16 h-16 bg-red-50 text-red-500 rounded-2xl flex items-center justify-center mb-6">
+        <div className="w-16 h-16 bg-red-50 text-red-500 rounded-full flex items-center justify-center mb-6">
           <X size={32} />
         </div>
         <h3 className="text-lg font-bold text-gray-900 mb-2">预览暂时不可用</h3>
-        <p className="text-gray-500 text-xs mb-8 max-w-[240px]">由于网络波动或内网限制，无法直接渲染。您可以直接下载查看。</p>
+        <p className="text-gray-500 text-xs mb-8 max-w-[240px]">由于网络波动或内网限制，无法直接下载。建议直接在新窗口尝试。</p>
         <a 
           href={url} 
           target="_blank" 
@@ -256,10 +276,26 @@ function PDFRenderer({ url }: { url: string }) {
     );
   }
 
+  // If JS rendering fails (worker blocked), fall back to native browser viewer with the blob URL
+  if (renderError && objectUrl) {
+    return (
+      <div className="w-full h-full bg-white relative">
+        <iframe 
+          src={`${objectUrl}#toolbar=0&navpanes=0`} 
+          className="w-full h-full border-none"
+          title="Native PDF Preview"
+        />
+        <div className="absolute top-0 left-0 w-full p-2 bg-yellow-50 text-yellow-700 text-[10px] font-bold text-center border-b border-yellow-100 z-50">
+          ⚠️ JS 引擎加载受阻，正在切换至原生渲染模式
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div ref={containerRef} className="flex flex-col h-full bg-gray-100 overflow-hidden">
       {/* Controls Bar */}
-      <div className="bg-white/90 backdrop-blur-xl border-b border-gray-100 p-2 flex items-center justify-between px-4 z-20 sticky top-0">
+      <div className="bg-white/95 backdrop-blur-xl border-b border-gray-100 p-2 flex items-center justify-between px-4 z-20 sticky top-0">
         <div className="flex items-center gap-2">
           <button 
             disabled={pageNumber <= 1}
@@ -292,6 +328,7 @@ function PDFRenderer({ url }: { url: string }) {
         <Document
           file={pdfBlob}
           onLoadSuccess={onDocumentLoadSuccess}
+          onLoadError={onDocumentLoadError}
           loading={<div className="animate-pulse text-gray-400 text-xs mt-20">正在解析页面...</div>}
         >
           <Page 
@@ -305,9 +342,10 @@ function PDFRenderer({ url }: { url: string }) {
         </Document>
       </div>
 
-      {/* Mobile Hint */}
-      <div className="md:hidden p-3 bg-blue-600 text-white text-center text-[10px] font-bold uppercase tracking-widest">
-        左右滑动或点击上方翻页
+      <div className="p-2 bg-white text-center border-t border-gray-100">
+         <p className="text-[9px] text-gray-300 font-bold uppercase tracking-widest">
+            {renderError ? "原生预览模式" : "JS 高清预览引擎 (国内加速中)"}
+         </p>
       </div>
     </div>
   );
