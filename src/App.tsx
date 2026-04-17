@@ -32,7 +32,8 @@ import { Document, Page, pdfjs } from 'react-pdf';
 import 'react-pdf/dist/Page/AnnotationLayer.css';
 import 'react-pdf/dist/Page/TextLayer.css';
 
-pdfjs.GlobalWorkerOptions.workerSrc = `https://npm.elemecdn.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.mjs`;
+// Using a version-matched domestic CDN for the worker to ensure stability in restricted/inner networks
+pdfjs.GlobalWorkerOptions.workerSrc = `https://npm.elemecdn.com/pdfjs-dist@4.4.168/build/pdf.worker.min.mjs`;
 
 // --- Supabase Client ---
 const SUPABASE_URL = "https://tduemvjrybtswpzxosig.supabase.co";
@@ -175,7 +176,7 @@ const DEFAULT_DATA: ResumeData = {
 
 // --- Components ---
 
-function PDFRenderer({ url }: { url: string }) {
+function PDFRenderer({ url, isAuthorMode }: { url: string; isAuthorMode: boolean }) {
   const [numPages, setNumPages] = useState<number>();
   const [pageNumber, setPageNumber] = useState(1);
   const [scale, setScale] = useState(1.0);
@@ -214,7 +215,8 @@ function PDFRenderer({ url }: { url: string }) {
     const updateWidth = () => {
       if (containerRef.current) {
         // Leave some padding for the shadow and borders
-        setContainerWidth(Math.min(containerRef.current.clientWidth - 32, 1200));
+        const width = containerRef.current.clientWidth - 48;
+        setContainerWidth(width > 0 ? Math.min(width, 1000) : 800);
       }
     };
     
@@ -260,19 +262,12 @@ function PDFRenderer({ url }: { url: string }) {
         <div className="w-20 h-20 bg-red-50 text-red-500 rounded-3xl flex items-center justify-center mb-6 shadow-sm">
           <FileText size={40} />
         </div>
-        <div className="max-w-xs space-y-3 mb-8">
-          <h3 className="text-xl font-bold text-gray-900">预览暂时受限</h3>
-          <p className="text-gray-500 text-sm leading-relaxed">由于内网或微信浏览器的安全策略，JS 渲染引擎被阻止开启。建议您点击下方按钮在新窗口尝试。</p>
+        <div className="max-w-xs space-y-3">
+          <h3 className="text-xl font-bold text-gray-900">预览加载受限</h3>
+          <p className="text-gray-500 text-sm leading-relaxed">
+            当前网络环境或浏览器引擎无法解析此文件。如果看到此提示，建议在电脑端非内网环境下重新访问。
+          </p>
         </div>
-        <a 
-          href={url} 
-          target="_blank" 
-          rel="noopener noreferrer"
-          className="px-10 py-4 bg-gray-900 text-white rounded-2xl text-sm font-bold hover:bg-black transition-all shadow-xl shadow-gray-200 active:scale-95 flex items-center gap-3"
-        >
-          <span>在新窗口极速浏览</span>
-          <ExternalLink size={16} />
-        </a>
       </div>
     );
   }
@@ -313,9 +308,11 @@ function PDFRenderer({ url }: { url: string }) {
         </div>
         
         <div className="flex items-center">
-           <a href={url} target="_blank" rel="noreferrer" className="p-2 hover:bg-gray-100 rounded-xl text-gray-400 transition-colors">
-              <ExternalLink size={18} />
-           </a>
+           {isAuthorMode && (
+             <a href={url} target="_blank" rel="noreferrer" className="p-2 hover:bg-gray-100 rounded-xl text-gray-400 transition-colors">
+                <ExternalLink size={18} />
+             </a>
+           )}
         </div>
       </div>
 
@@ -615,7 +612,7 @@ export default function App() {
     if (!isAuthorMode) return;
     const input = document.createElement('input');
     input.type = 'file';
-    input.accept = '.pdf,.xlsx,.xls';
+    input.accept = '.pdf,.png,.jpg,.jpeg,.webp';
     input.onchange = async (e: any) => {
       const file = e.target.files[0];
       if (file) {
@@ -1427,7 +1424,7 @@ export default function App() {
         )}
       </AnimatePresence>
 
-      {/* PDF Preview Modal */}
+      {/* PDF & Image Preview Modal */}
       <AnimatePresence>
         {previewFile && (
           <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 md:p-10 no-print">
@@ -1436,65 +1433,109 @@ export default function App() {
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
               onClick={() => setPreviewFile(null)}
-              className="absolute inset-0 bg-gray-900/80 backdrop-blur-md"
+              className="absolute inset-0 bg-gray-900/90 backdrop-blur-xl"
             />
             <motion.div 
-              initial={{ opacity: 0, scale: 0.95 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.95 }}
-              className="relative w-full max-w-5xl h-full bg-white rounded-3xl shadow-2xl overflow-hidden flex flex-col"
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              className="relative w-full max-w-5xl h-full bg-white rounded-[2rem] shadow-2xl overflow-hidden flex flex-col"
             >
-              <div className="p-4 border-b border-gray-100 flex items-center justify-between bg-white">
-                <div className="flex items-center gap-3">
-                  <div className="p-2 bg-red-50 text-red-600 rounded-lg">
-                    <FileText size={20} />
-                  </div>
-                  <div>
-                    <h4 className="text-sm font-bold text-gray-900 leading-none">{previewFile.name}</h4>
-                    <p className="text-[10px] text-gray-400 mt-1 font-medium uppercase tracking-widest text-left">受保护的在线预览模式</p>
-                  </div>
+              <div className="p-4 md:p-6 border-b border-gray-100 flex items-center justify-between bg-white z-50">
+                <div className="flex items-center gap-4">
+                  {(() => {
+                    const ext = previewFile.name.split('.').pop()?.toLowerCase();
+                    const isImg = ['png', 'jpg', 'jpeg', 'webp', 'gif'].includes(ext || '');
+                    return (
+                      <>
+                        <div className={`p-3 rounded-2xl ${isImg ? 'bg-blue-50 text-blue-600' : 'bg-red-50 text-red-600'}`}>
+                          {isImg ? <LayoutGrid size={24} /> : <FileText size={24} />}
+                        </div>
+                        <div className="text-left">
+                          <h4 className="text-sm md:text-base font-black text-gray-900 leading-tight truncate max-w-[200px] md:max-w-md">
+                            {previewFile.name}
+                          </h4>
+                          <p className="text-[10px] text-blue-500 font-black uppercase tracking-[0.2em] mt-1">
+                            {isImg ? "高清作品预览模式" : "受保护的在线阅读模式"}
+                          </p>
+                        </div>
+                      </>
+                    );
+                  })()}
                 </div>
+                
                 <div className="flex items-center gap-2">
                   {isAuthorMode && (
-                    <a 
-                      href={previewFile.url} 
-                      target="_blank" 
-                      rel="noopener noreferrer"
-                      className="flex items-center gap-2 px-4 py-2 bg-gray-100 text-gray-600 rounded-xl text-xs font-bold hover:bg-gray-200 transition-colors"
-                    >
-                      <Upload size={14} /> 原始链接
-                    </a>
+                    <div className="hidden md:flex items-center gap-2 mr-4">
+                      <a 
+                        href={previewFile.url} 
+                        target="_blank" 
+                        rel="noopener noreferrer"
+                        className="px-5 py-2.5 bg-gray-100 text-gray-600 rounded-xl text-xs font-bold hover:bg-gray-200 transition-all active:scale-95 flex items-center gap-2"
+                      >
+                        <Upload size={14} /> 管理文件资源
+                      </a>
+                    </div>
                   )}
                   <button 
                     onClick={() => setPreviewFile(null)}
-                    className="p-2 text-gray-400 hover:text-gray-900 transition-colors"
+                    className="p-3 bg-gray-50 text-gray-400 hover:text-gray-900 hover:bg-gray-100 rounded-2xl transition-all active:scale-90"
                   >
                     <X size={24} />
                   </button>
                 </div>
               </div>
-              <div className="flex-1 bg-gray-100 relative overflow-hidden flex flex-col">
-                {previewFile.type === 'pdf' ? (
-                  <PDFRenderer url={previewFile.url} />
-                ) : (
-                  <div className="w-full h-full flex flex-col items-center justify-center p-12 text-center space-y-4">
-                    <div className="w-20 h-20 bg-green-50 text-green-600 rounded-3xl flex items-center justify-center">
-                      <Table size={40} />
+
+              <div className="flex-1 bg-[#f1f2f4] relative overflow-hidden flex flex-col">
+                {(() => {
+                  const ext = previewFile.name.split('.').pop()?.toLowerCase();
+                  const isImg = ['png', 'jpg', 'jpeg', 'webp', 'gif'].includes(ext || '');
+                  
+                  if (isImg) {
+                    return (
+                      <div 
+                        className="w-full h-full p-4 md:p-12 overflow-auto flex justify-center items-start select-none"
+                        onContextMenu={(e) => e.preventDefault()}
+                      >
+                        <div className="relative group">
+                          <img 
+                            src={previewFile.url} 
+                            alt={previewFile.name}
+                            referrerPolicy="no-referrer"
+                            className="max-w-full shadow-[0_30px_60px_rgba(0,0,0,0.15)] rounded-lg pointer-events-none"
+                            style={{ userSelect: 'none' }}
+                          />
+                          <div className="absolute inset-0 pointer-events-none border border-black/5 rounded-lg" />
+                        </div>
+                      </div>
+                    );
+                  }
+                  
+                  if (ext === 'pdf') {
+                    return <PDFRenderer url={previewFile.url} isAuthorMode={isAuthorMode} />;
+                  }
+                  
+                  return (
+                    <div className="w-full h-full flex flex-col items-center justify-center p-12 text-center space-y-4">
+                      <div className="w-20 h-20 bg-green-50 text-green-600 rounded-3xl flex items-center justify-center">
+                        <Table size={40} />
+                      </div>
+                      <div className="space-y-1">
+                        <h3 className="text-xl font-bold text-gray-900">该格式暂不支持在线直接预览</h3>
+                        <p className="text-gray-500 text-sm">请联系作者获取文件访问权限</p>
+                      </div>
                     </div>
-                    <div className="space-y-1">
-                      <h3 className="text-xl font-bold text-gray-900">Excel 暂不支持在线直接预览</h3>
-                      <p className="text-gray-500 text-sm">请联系作者获取文件访问权限</p>
-                    </div>
-                  </div>
-                )}
-                {/* Visual watermark/protection layer (optional, just makes it harder to right click) */}
+                  );
+                })()}
+                
+                {/* Visual watermark layer */}
                 <div className="absolute inset-0 pointer-events-none select-none flex items-center justify-center opacity-[0.03]">
                   <span className="text-6xl font-black rotate-[-45deg]">{data.name} 内部作品</span>
                 </div>
               </div>
-              <div className="p-4 bg-gray-50 text-center">
-                <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">
-                  预览模式受限 · 不提供公开下载链接
+              <div className="p-4 bg-white border-t border-gray-50 text-center">
+                <p className="text-[10px] font-black text-gray-400 uppercase tracking-[0.2em]">
+                  预览模式已受云端保护 • 禁止未经授权的下载
                 </p>
               </div>
             </motion.div>
