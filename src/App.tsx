@@ -176,118 +176,89 @@ const DEFAULT_DATA: ResumeData = {
 // --- Components ---
 
 function PDFRenderer({ url }: { url: string }) {
-  const [numPages, setNumPages] = useState<number>();
-  const [pageNumber, setPageNumber] = useState(1);
-  const [scale, setScale] = useState(1.2);
-  const [loadError, setLoadError] = useState(false);
-  const [useFallback, setUseFallback] = useState(false);
+  const [pdfBlob, setPdfBlob] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
-  function onDocumentLoadSuccess({ numPages }: { numPages: number }) {
-    setNumPages(numPages);
-    setPageNumber(1);
-    setLoadError(false);
+  useEffect(() => {
+    let objectUrl: string | null = null;
+    
+    async function loadPdf() {
+      try {
+        setLoading(true);
+        setError(null);
+        
+        // Fetch as blob to bypass cross-origin/server download headers
+        const response = await fetch(url);
+        if (!response.ok) throw new Error('文件下载失败，请检查网络');
+        
+        const blob = await response.blob();
+        
+        // Ensure the browser treats it as a PDF for the iframe
+        const pdfBlob = new Blob([blob], { type: 'application/pdf' });
+        objectUrl = URL.createObjectURL(pdfBlob);
+        setPdfBlob(objectUrl);
+      } catch (err: any) {
+        console.error("PDF Load Error:", err);
+        setError(err.message || "无法加载文件");
+      } finally {
+        setLoading(false);
+      }
+    }
+
+    loadPdf();
+
+    return () => {
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [url]);
+
+  if (loading) {
+    return (
+      <div className="w-full h-full flex flex-col items-center justify-center bg-gray-50">
+        <div className="relative">
+          <div className="w-16 h-16 border-4 border-blue-100 border-t-blue-600 rounded-full animate-spin" />
+          <div className="absolute inset-0 flex items-center justify-center">
+            <FileText size={20} className="text-blue-500" />
+          </div>
+        </div>
+        <p className="mt-6 text-gray-500 font-bold text-sm tracking-widest animate-pulse">正在准备高清预览...</p>
+        <p className="mt-2 text-gray-400 text-[10px] uppercase tracking-tighter">正在加密传输并绕过内网限制</p>
+      </div>
+    );
   }
 
-  // Use Microsoft Office Online as a domestic-friendly fallback that bypasses client-side CORS
-  const microsoftViewerUrl = `https://view.officeapps.live.com/op/view.aspx?src=${encodeURIComponent(url)}`;
-
-  if (useFallback) {
+  if (error || !pdfBlob) {
     return (
-      <div className="w-full h-full flex flex-col">
-        <div className="p-2 bg-blue-50 border-b border-blue-100 flex items-center justify-between px-6">
-          <span className="text-xs text-blue-600 font-medium">✨ 已切换至“兼容模式” (微软在线预览)</span>
-          <button 
-            onClick={() => setUseFallback(false)}
-            className="text-xs text-blue-500 hover:text-blue-700 underline font-bold"
-          >
-            尝试原生渲染
-          </button>
+      <div className="flex flex-col items-center justify-center h-full p-12 text-center bg-white">
+        <div className="w-20 h-20 bg-red-50 text-red-500 rounded-3xl flex items-center justify-center mb-6">
+          <X size={40} />
         </div>
-        <iframe 
-          src={microsoftViewerUrl} 
-          className="w-full h-full border-none bg-white"
-          title="Microsoft Online PDF Viewer"
-        />
+        <div className="max-w-xs space-y-4">
+          <h3 className="text-xl font-bold text-gray-900 leading-tight">预览引擎遇到阻碍</h3>
+          <p className="text-gray-500 text-sm leading-relaxed">该文件较大或您的内网环境对数据抓取有限制。建议直接在新窗口打开。</p>
+          <a 
+            href={url} 
+            target="_blank" 
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-3 px-8 py-4 bg-gray-900 text-white rounded-2xl text-sm font-bold hover:bg-black transition-all shadow-xl shadow-gray-200"
+          >
+            在新标签页预览 <ExternalLink size={16} />
+          </a>
+        </div>
       </div>
     );
   }
 
   return (
-    <div className="flex flex-col items-center w-full h-full text-center overflow-auto bg-gray-200">
-      <div className="sticky top-0 z-20 flex items-center justify-center gap-4 py-3 bg-white/80 backdrop-blur-md w-full shadow-sm">
-        <button 
-          disabled={pageNumber <= 1} 
-          onClick={() => setPageNumber(prev => Math.max(prev - 1, 1))}
-          className="px-3 py-1 bg-gray-100 rounded text-sm hover:bg-gray-200 disabled:opacity-50"
-        >
-          上一页
-        </button>
-        <span className="text-sm font-medium text-gray-700">
-          第 {pageNumber} / {numPages || '--'} 页
-        </span>
-        <button 
-          disabled={numPages === undefined || pageNumber >= numPages} 
-          onClick={() => setPageNumber(prev => Math.min(prev + 1, numPages || 1))}
-          className="px-3 py-1 bg-gray-100 rounded text-sm hover:bg-gray-200 disabled:opacity-50"
-        >
-          下一页
-        </button>
-        
-        <div className="w-px h-6 bg-gray-300 mx-2" />
-        
-        <button onClick={() => setScale(s => Math.max(s - 0.2, 0.5))} className="px-2 py-1 text-gray-600 hover:bg-gray-100 rounded">-</button>
-        <span className="text-xs text-gray-500 w-12">{Math.round(scale * 100)}%</span>
-        <button onClick={() => setScale(s => Math.min(s + 0.2, 3))} className="px-2 py-1 text-gray-600 hover:bg-gray-100 rounded">+</button>
-      </div>
-
-      <div className="flex-1 overflow-auto w-full flex justify-center py-6 px-4">
-        <Document 
-          file={url} 
-          onLoadSuccess={onDocumentLoadSuccess}
-          onLoadError={() => setLoadError(true)}
-          loading={
-            <div className="text-gray-400 mt-20 animate-pulse flex flex-col items-center">
-              <div className="w-10 h-10 border-4 border-blue-200 border-t-blue-500 rounded-full animate-spin mb-4" />
-              正在渲染 PDF...
-            </div>
-          }
-          error={
-            <div className="flex flex-col items-center justify-center mt-20 p-8 space-y-6 max-w-md mx-auto">
-              <div className="p-4 bg-red-50 text-red-500 rounded-2xl">
-                 <FileText size={48} />
-              </div>
-              <div className="space-y-2">
-                <h3 className="text-lg font-bold text-gray-900 leading-tight">无法直接加载 PDF 资源</h3>
-                <p className="text-sm text-gray-500">可能是由于跨域限制 (CORS) 或本地网络环境阻断了 PDF 二进制流。您可以尝试以下方式：</p>
-              </div>
-              <div className="w-full flex flex-col gap-3">
-                <button 
-                  onClick={() => setUseFallback(true)}
-                  className="w-full py-3 bg-blue-600 text-white rounded-xl text-sm font-bold shadow-lg shadow-blue-500/25 hover:bg-blue-700 transition"
-                >
-                  🚀 切换至国内优化预览模式
-                </button>
-                <a 
-                  href={url} 
-                  target="_blank" 
-                  rel="noopener noreferrer"
-                  className="w-full py-3 bg-gray-100 text-gray-600 rounded-xl text-sm font-bold hover:bg-gray-200 transition"
-                >
-                  在新窗口中直接打开
-                </a>
-              </div>
-            </div>
-          }
-        >
-          <Page 
-            pageNumber={pageNumber} 
-            scale={scale} 
-            renderTextLayer={false} 
-            renderAnnotationLayer={false} 
-            className="shadow-2xl rounded-sm overflow-hidden bg-white"
-          />
-        </Document>
-      </div>
+    <div className="w-full h-full bg-white relative">
+      <iframe 
+        src={`${pdfBlob}#toolbar=0&navpanes=0`} 
+        className="w-full h-full border-none"
+        title="PDF Preview"
+      />
+      {/* Visual protection layer */}
+      <div className="absolute top-0 left-0 w-full h-12 bg-transparent z-10" />
     </div>
   );
 }
