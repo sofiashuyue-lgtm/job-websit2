@@ -183,9 +183,9 @@ export default function App() {
   const [avatarSrc, setAvatarSrc] = useState<string | null>(null);
   const [isSaved, setIsSaved] = useState(false);
 
-  // Persistence
+  // Real-time & Initial Persistence
   useEffect(() => {
-    const loadFromSupabase = async () => {
+    const fetchData = async () => {
       try {
         const { data: dbData, error } = await supabase
           .from('resume_config')
@@ -194,26 +194,32 @@ export default function App() {
           .single();
           
         if (dbData && dbData.data && !error) {
-          setData({ ...DEFAULT_DATA, ...dbData.data });
-          return;
+          setData(prev => ({ ...prev, ...dbData.data }));
         }
       } catch (err) {
-        console.warn("Failed to read from Supabase, attempting local storage fallback", err);
-      }
-      
-      // Fallback
-      const savedData = localStorage.getItem('resume_data');
-      if (savedData) {
-        try {
-          const parsed = JSON.parse(savedData);
-          if (parsed && typeof parsed === 'object') {
-            setData({ ...DEFAULT_DATA, ...parsed });
-          }
-        } catch (e) {}
+        console.warn("Failed to read from Supabase on start", err);
       }
     };
-    
-    loadFromSupabase();
+
+    fetchData();
+
+    // Subscribe to REALTIME changes
+    const channel = supabase
+      .channel('schema-db-changes')
+      .on(
+        'postgres_changes',
+        { event: 'UPDATE', schema: 'public', table: 'resume_config', filter: 'id=eq.main' },
+        (payload) => {
+          if (payload.new && payload.new.data) {
+            setData(prev => ({ ...prev, ...payload.new.data }));
+          }
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, []);
 
   const saveData = async (newData: ResumeData) => {
@@ -349,14 +355,34 @@ export default function App() {
     const input = document.createElement('input');
     input.type = 'file';
     input.accept = 'image/*';
-    input.onchange = (e: any) => {
+    input.onchange = async (e: any) => {
       const file = e.target.files[0];
       if (file) {
-        const reader = new FileReader();
-        reader.onload = (re) => {
-          updateField('avatarUrl', re.target?.result as string);
-        };
-        reader.readAsDataURL(file);
+        setIsUploading(true);
+        setUploadStatus("正在更新头像...");
+        try {
+          const fileExt = file.name.split('.').pop();
+          const storageKey = `avatar-${Date.now()}.${fileExt}`;
+          
+          const { data: uploadData, error: uploadError } = await supabase.storage
+            .from('resume_files')
+            .upload(storageKey, file, { contentType: file.type });
+
+          if (uploadError) throw uploadError;
+
+          const { data: urlData } = supabase.storage
+            .from('resume_files')
+            .getPublicUrl(storageKey);
+
+          updateField('avatarUrl', urlData.publicUrl);
+          setUploadStatus("头像更新成功！");
+          setTimeout(() => setUploadStatus(null), 3000);
+        } catch (err: any) {
+          console.error("Avatar upload failed:", err);
+          setUploadStatus("头像保存失败，请检查网络");
+        } finally {
+          setIsUploading(false);
+        }
       }
     };
     input.click();
@@ -412,7 +438,7 @@ export default function App() {
           setUploadStatus("正在推送至云存储...");
           const { data: uploadData, error: uploadError } = await supabase.storage
             .from('resume_files')
-            .upload(storageKey, file);
+            .upload(storageKey, file, { contentType: file.type });
 
           if (uploadError) throw uploadError;
 
@@ -1257,11 +1283,24 @@ export default function App() {
               </div>
               <div className="flex-1 bg-gray-100 relative">
                 {previewFile.type === 'pdf' ? (
-                  <iframe 
-                    src={`https://docs.google.com/viewer?url=${encodeURIComponent(previewFile.url)}&embedded=true`} 
-                    className="w-full h-full border-none"
-                    title="PDF Preview"
-                  />
+                  <div className="w-full h-full relative">
+                    <iframe 
+                      src={`${previewFile.url}#toolbar=0&navpanes=0`} 
+                      className="w-full h-full border-none"
+                      title="PDF Preview"
+                    />
+                    {/* Fallback button for some network environments or previous files lacking content-type */}
+                    <div className="absolute bottom-4 right-4 z-10 flex flex-col gap-2">
+                       <a 
+                         href={previewFile.url} 
+                         target="_blank" 
+                         rel="noopener noreferrer"
+                         className="px-4 py-2 bg-blue-600 text-white rounded-full text-xs font-bold shadow-lg shadow-blue-500/30 hover:bg-blue-700 transition flex items-center justify-center"
+                       >
+                         在新窗口中打开
+                       </a>
+                    </div>
+                  </div>
                 ) : (
                   <div className="w-full h-full flex flex-col items-center justify-center p-12 text-center space-y-4">
                     <div className="w-20 h-20 bg-green-50 text-green-600 rounded-3xl flex items-center justify-center">
