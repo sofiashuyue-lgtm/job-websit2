@@ -28,12 +28,17 @@ import {
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { createClient } from '@supabase/supabase-js';
-import { Document, Page, pdfjs } from 'react-pdf';
-import 'react-pdf/dist/Page/AnnotationLayer.css';
-import 'react-pdf/dist/Page/TextLayer.css';
+import { pdfjs } from 'react-pdf';
 
-// Using a version-matched domestic CDN for the worker to ensure stability in restricted/inner networks
-pdfjs.GlobalWorkerOptions.workerSrc = `https://npm.elemecdn.com/pdfjs-dist@4.4.168/build/pdf.worker.min.mjs`;
+// Since PDF parsing now ONLY happens during the Author's upload phase,
+// we can safely use the locally bundled worker for maximum reliability during upload.
+pdfjs.GlobalWorkerOptions.workerSrc = new URL(
+  'pdfjs-dist/build/pdf.worker.min.mjs',
+  import.meta.url,
+).toString();
+
+// Standard CMaps for Chinese fonts during upload rendering
+const MAP_URL = `https://unpkg.com/pdfjs-dist@${pdfjs.version}/cmaps/`;
 
 // --- Supabase Client ---
 const SUPABASE_URL = "https://tduemvjrybtswpzxosig.supabase.co";
@@ -64,7 +69,8 @@ interface ProjectFile {
   id: string;
   name: string;
   url: string;
-  type: 'pdf' | 'excel' | 'other';
+  type: 'pdf' | 'excel' | 'other' | 'pdf_gallery';
+  imageUrls?: string[];
 }
 
 interface Project {
@@ -175,189 +181,6 @@ const DEFAULT_DATA: ResumeData = {
 };
 
 // --- Components ---
-
-function PDFRenderer({ url, isAuthorMode }: { url: string; isAuthorMode: boolean }) {
-  const [numPages, setNumPages] = useState<number>();
-  const [pageNumber, setPageNumber] = useState(1);
-  const [scale, setScale] = useState(1.0);
-  const [pdfData, setPdfData] = useState<Uint8Array | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [containerWidth, setContainerWidth] = useState<number>(0);
-  const containerRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    async function fetchPdf() {
-      try {
-        setLoading(true);
-        setError(null);
-        
-        // Fetching as ArrayBuffer (Uint8Array) is more stable for PDF.js than Blobs in restricted browsers
-        const response = await fetch(url, {
-          headers: { 'Accept': 'application/pdf' }
-        });
-        
-        if (!response.ok) throw new Error(`无法获取文件 (状态: ${response.status})`);
-        
-        const buffer = await response.arrayBuffer();
-        setPdfData(new Uint8Array(buffer));
-      } catch (err: any) {
-        console.error("PDF Fetch Error:", err);
-        setError(err.message || '网络连接受限，建议刷新重试');
-      } finally {
-        setLoading(false);
-      }
-    }
-    fetchPdf();
-  }, [url]);
-
-  useEffect(() => {
-    const updateWidth = () => {
-      if (containerRef.current) {
-        // Leave some padding for the shadow and borders
-        const width = containerRef.current.clientWidth - 48;
-        setContainerWidth(width > 0 ? Math.min(width, 1000) : 800);
-      }
-    };
-    
-    // Initial and periodic update to handle dynamic layouts
-    updateWidth();
-    const interval = setInterval(updateWidth, 1000);
-    window.addEventListener('resize', updateWidth);
-    
-    return () => {
-      window.removeEventListener('resize', updateWidth);
-      clearInterval(interval);
-    };
-  }, []);
-
-  function onDocumentLoadSuccess({ numPages }: { numPages: number }) {
-    setNumPages(numPages);
-    setPageNumber(1);
-    setError(null);
-  }
-
-  if (loading) {
-    return (
-      <div className="w-full h-full flex flex-col items-center justify-center bg-gray-50/50 backdrop-blur-sm p-12 text-center">
-        <motion.div 
-          animate={{ rotate: 360 }}
-          transition={{ duration: 1.5, repeat: Infinity, ease: "linear" }}
-          className="w-14 h-14 border-[3px] border-blue-100 border-t-blue-600 rounded-full mb-8 shadow-inner"
-        />
-        <div className="space-y-3">
-          <p className="text-gray-900 font-bold text-base tracking-tight">正在极速载入高清资源</p>
-          <div className="flex flex-col gap-1 items-center">
-             <p className="text-gray-400 text-[10px] uppercase tracking-widest">已启用微信 PC/移动端专用离线渲染引擎</p>
-             <p className="text-blue-500/60 text-[9px] font-mono">Loading data into memory channel...</p>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  if (error || !pdfData) {
-    return (
-      <div className="flex flex-col items-center justify-center h-full p-12 text-center bg-white">
-        <div className="w-20 h-20 bg-red-50 text-red-500 rounded-3xl flex items-center justify-center mb-6 shadow-sm">
-          <FileText size={40} />
-        </div>
-        <div className="max-w-xs space-y-3">
-          <h3 className="text-xl font-bold text-gray-900">预览加载受限</h3>
-          <p className="text-gray-500 text-sm leading-relaxed">
-            当前网络环境或浏览器引擎无法解析此文件。如果看到此提示，建议在电脑端非内网环境下重新访问。
-          </p>
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <div ref={containerRef} className="flex flex-col h-full bg-[#f8f9fa] overflow-hidden select-none">
-      {/* Premium Controls Bar */}
-      <div className="bg-white/95 backdrop-blur-xl border-b border-gray-100 p-2.5 flex items-center justify-between px-6 z-30 sticky top-0 shadow-sm">
-        <div className="flex items-center gap-1.5 md:gap-4">
-          <button 
-            disabled={pageNumber <= 1}
-            onClick={() => setPageNumber(p => p - 1)}
-            className="p-2.5 hover:bg-gray-100 rounded-xl disabled:opacity-20 transition-all active:scale-90"
-          >
-            <ChevronRight className="rotate-180 text-gray-700" size={20} />
-          </button>
-          
-          <div className="flex items-center gap-1">
-             <span className="text-sm font-black text-gray-900 w-8 text-center">{pageNumber}</span>
-             <span className="text-xs font-medium text-gray-300">/</span>
-             <span className="text-xs font-bold text-gray-400 w-8 text-center">{numPages || '-'}</span>
-          </div>
-
-          <button 
-            disabled={pageNumber >= (numPages || 0)}
-            onClick={() => setPageNumber(p => p + 1)}
-            className="p-2.5 hover:bg-gray-100 rounded-xl disabled:opacity-20 transition-all active:scale-90"
-          >
-            <ChevronRight className="text-gray-700" size={20} />
-          </button>
-        </div>
-
-        {/* Zoom Controls (Hidden on narrow mobile screens) */}
-        <div className="hidden sm:flex items-center gap-1 bg-gray-50/80 p-1.5 rounded-2xl border border-gray-100">
-          <button onClick={() => setScale(s => Math.max(0.4, s - 0.2))} className="p-2 hover:bg-white rounded-xl transition-all"><X size={16} className="rotate-45 text-gray-400" /></button>
-          <span className="text-[11px] font-black text-gray-500 w-14 text-center tabular-nums">{Math.round(scale * 100)}%</span>
-          <button onClick={() => setScale(s => Math.min(4, s + 0.2))} className="p-2 hover:bg-white rounded-xl transition-all"><Plus size={16} className="text-gray-400" /></button>
-        </div>
-        
-        <div className="flex items-center">
-           {isAuthorMode && (
-             <a href={url} target="_blank" rel="noreferrer" className="p-2 hover:bg-gray-100 rounded-xl text-gray-400 transition-colors">
-                <ExternalLink size={18} />
-             </a>
-           )}
-        </div>
-      </div>
-
-      {/* Page Viewer with Smooth Scrolling */}
-      <div className="flex-1 overflow-auto p-4 md:p-10 flex flex-col items-center scroll-smooth bg-gray-100/50">
-        <Document
-          file={pdfData}
-          onLoadSuccess={onDocumentLoadSuccess}
-          onLoadError={(err) => {
-            console.error("Document Load Error:", err);
-            setError("文件解析失败，可能是格式不支持");
-          }}
-          loading={
-            <div className="flex flex-col items-center mt-32 space-y-4">
-               <div className="w-10 h-1 border-t-2 border-blue-500 rounded animate-pulse" />
-               <p className="text-[10px] text-gray-400 uppercase font-black tracking-widest">初始化渲染图层...</p>
-            </div>
-          }
-        >
-          <motion.div
-            key={pageNumber}
-            initial={{ opacity: 0, y: 10 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.3 }}
-          >
-            <Page 
-              pageNumber={pageNumber} 
-              scale={scale}
-              width={containerWidth > 0 ? containerWidth : undefined}
-              className="shadow-[0_20px_50px_rgba(0,0,0,0.1)] rounded-lg overflow-hidden border border-white/50"
-              renderTextLayer={false}
-              renderAnnotationLayer={false}
-              loading={<div className="bg-white/50 w-full aspect-[1/1.4] animate-pulse" />}
-            />
-          </motion.div>
-        </Document>
-      </div>
-
-      {/* Mobile Interaction Hint */}
-      <div className="md:hidden p-3 bg-gray-900 text-white text-center text-[9px] font-black uppercase tracking-[0.2em]">
-        左右点击上方箭头翻页 • 跨端离线模式
-      </div>
-    </div>
-  );
-}
 
 export default function App() {
   console.log('App component is rendering');
@@ -619,44 +442,110 @@ export default function App() {
         setIsUploading(true);
         setUploadStatus("准备上传...");
         try {
-          // 1. Upload to Supabase Storage
-          // Use a strictly safe ASCII key for storage to avoid "Invalid key" errors with non-ASCII chars
-          const fileExt = file.name.split('.').pop();
-          const storageKey = `file-${Date.now()}-${Math.random().toString(36).substring(2, 7)}.${fileExt}`;
+          // 1. Initial Checks
+          const fileExt = file.name.split('.').pop()?.toLowerCase() || '';
           
-          setUploadStatus("正在推送至云存储...");
-          const { data: uploadData, error: uploadError } = await supabase.storage
-            .from('resume_files')
-            .upload(storageKey, file, { contentType: file.type });
+          if (fileExt === 'pdf') {
+            setUploadStatus("正在启动本地转换引擎 (PDF安全转码中)...");
+            const arrayBuffer = await file.arrayBuffer();
+            
+            // Standard loading config to ensure complete font/CMAP loading
+            const pdf = await pdfjs.getDocument({ 
+              data: arrayBuffer,
+              cMapUrl: MAP_URL,
+              cMapPacked: true,
+              standardFontDataUrl: `https://unpkg.com/pdfjs-dist@${pdfjs.version}/standard_fonts/`
+            }).promise;
+            
+            const urls: string[] = [];
+            // Map every page to a canvas, get JPEG Blob, upload
+            for(let i = 1; i <= pdf.numPages; i++) {
+               setUploadStatus(`正处理图像以保证极速加载 ${i} / ${pdf.numPages}...`);
+               const page = await pdf.getPage(i);
+               
+               // Dynamic resolution scaling: prevents RAM crash on giant files while keeping text crisp
+               const unscaled = page.getViewport({ scale: 1 });
+               const maxDim = Math.max(unscaled.width, unscaled.height);
+               const targetScale = Math.min(2.0, 1800 / maxDim); // Cap maximum dimension around 1800px
+               const viewport = page.getViewport({ scale: targetScale });
+               
+               const canvas = document.createElement('canvas');
+               canvas.width = viewport.width;
+               canvas.height = viewport.height;
+               const context = canvas.getContext('2d', { alpha: false }); // Opaque background optimizes memory further
+               
+               if (context) {
+                 context.fillStyle = '#ffffff';
+                 context.fillRect(0, 0, canvas.width, canvas.height); // Ensure white background before rendering
+                 
+                 await page.render({ canvasContext: context, viewport, background: 'rgba(255,255,255,1)' } as any).promise;
+                 const blob = await new Promise<Blob>((resolve) => canvas.toBlob((b) => resolve(b!), 'image/jpeg', 0.8)); // 0.8 compression significantly speeds up upload and display
+                 
+                 const storageKey = `gallery-${Date.now()}-p${i}-${Math.random().toString(36).substring(2,6)}.jpg`;
+                 const { error: upErr } = await supabase.storage.from('resume_files').upload(storageKey, blob, { contentType: 'image/jpeg' });
+                 if (upErr) throw upErr;
+                 
+                 const { data: urlData } = supabase.storage.from('resume_files').getPublicUrl(storageKey);
+                 urls.push(urlData.publicUrl);
+               }
+               // Explicitly cleanup memory to prevent mobile browser crashes on large PDFs
+               canvas.width = 0;
+               canvas.height = 0;
+               page.cleanup();
+            }
+            
+            setUploadStatus("全高清档案生成完毕，更新配置中...");
+            const newFile: ProjectFile = {
+              id: Date.now().toString(),
+              name: file.name,
+              url: urls[0] || '', // preview uses the first page
+              type: 'pdf_gallery',
+              imageUrls: urls
+            };
+            
+            const newData = { ...data };
+            const project = newData.projects.find(p => p.id === projectId);
+            if (project) {
+              project.files.push(newFile);
+              await saveData(newData);
+              if (selectedProject?.id === projectId) {
+                setSelectedProject({ ...project });
+              }
+            }
+          } else {
+            // Standard Upload Strategy for Images/Excel
+            const storageKey = `file-${Date.now()}-${file.name.replace(/[^a-zA-Z0-9.-]/g, '_')}`;
+            
+            setUploadStatus("正在推送至云存储...");
+            const { error: uploadError } = await supabase.storage
+              .from('resume_files')
+              .upload(storageKey, file, { contentType: file.type });
 
-          if (uploadError) throw uploadError;
+            if (uploadError) throw uploadError;
 
-          // 2. Get Public URL
-          setUploadStatus("获取资源链接...");
-          const { data: urlData } = supabase.storage
-            .from('resume_files')
-            .getPublicUrl(storageKey);
+            setUploadStatus("获取资源链接...");
+            const { data: urlData } = supabase.storage
+              .from('resume_files')
+              .getPublicUrl(storageKey);
 
-          const publicUrl = urlData.publicUrl;
-
-          // 3. Update State & DB
-          setUploadStatus("正在更新个人配置...");
-          const newFile: ProjectFile = {
-            id: Date.now().toString(),
-            name: file.name,
-            url: publicUrl,
-            type: file.name.endsWith('.pdf') ? 'pdf' : 'excel'
-          };
-          
-          const newData = { ...data };
-          const project = newData.projects.find(p => p.id === projectId);
-          if (project) {
-            project.files.push(newFile);
-            await saveData(newData);
-            if (selectedProject?.id === projectId) {
-              setSelectedProject({ ...project });
+            const newFile: ProjectFile = {
+              id: Date.now().toString(),
+              name: file.name,
+              url: urlData.publicUrl,
+              type: fileExt === 'pdf' ? 'pdf' : (['png','jpg','jpeg','webp','gif'].includes(fileExt) ? 'other' : 'excel')
+            };
+            
+            const newData = { ...data };
+            const project = newData.projects.find(p => p.id === projectId);
+            if (project) {
+              project.files.push(newFile);
+              await saveData(newData);
+              if (selectedProject?.id === projectId) {
+                setSelectedProject({ ...project });
+              }
             }
           }
+          
           setUploadStatus("上传成功！");
           setTimeout(() => setUploadStatus(null), 3000);
         } catch (err: any) {
@@ -1511,8 +1400,59 @@ export default function App() {
                     );
                   }
                   
-                  if (ext === 'pdf') {
-                    return <PDFRenderer url={previewFile.url} isAuthorMode={isAuthorMode} />;
+                  if (previewFile.type === 'pdf_gallery') {
+                    return (
+                      <div className="absolute inset-x-0 bottom-0 top-[73px] overflow-y-auto bg-[#edeff2] pb-10" style={{ WebkitOverflowScrolling: 'touch' }}>
+                         <div className="w-full max-w-4xl mx-auto shadow-2xl bg-white flex flex-col relative z-10 sm:mt-8 sm:mb-8 sm:rounded-xl overflow-hidden min-h-screen">
+                            {previewFile.imageUrls?.map((imgUrl, i) => (
+                               <div key={i} className="relative w-full border-b border-gray-100 last:border-0 bg-gray-50 flex items-center justify-center min-h-[50vh]">
+                                  {/* Loading placeholder helps browser calculate heights for lazy-loading to optimize initial render */}
+                                  <div className="absolute inset-0 flex items-center justify-center text-gray-300 text-xs tracking-widest uppercase font-bold z-0 pointer-events-none">
+                                    <div className="flex flex-col items-center gap-2">
+                                      <div className="w-6 h-6 border-2 border-gray-200 border-t-gray-400 rounded-full animate-spin"/>
+                                      载入图集 - 第 {i+1} 页
+                                    </div>
+                                  </div>
+                                  <img 
+                                    src={imgUrl} 
+                                    className="w-full h-auto block z-10 pointer-events-none relative" 
+                                    style={{ WebkitTouchCallout: 'none', userSelect: 'none' }}
+                                    alt={`档案页面 ${i+1}`} 
+                                    loading="lazy"
+                                    decoding="async"
+                                  />
+                               </div>
+                            ))}
+                         </div>
+                         <div className="py-8 text-center opacity-40">
+                            <p className="text-[10px] font-black tracking-[0.3em] text-gray-500 uppercase">阅读完毕 • 无痕保护引擎</p>
+                         </div>
+                      </div>
+                    );
+                  }
+                  
+                  if (ext === 'pdf' || previewFile.type === 'pdf') {
+                    return (
+                      <div className="w-full h-full flex flex-col items-center justify-center p-8 text-center bg-white space-y-6">
+                        <div className="w-20 h-20 bg-blue-50 text-blue-500 rounded-3xl flex items-center justify-center relative shadow-sm">
+                          <FileText size={36} />
+                          <div className="absolute -top-2 -right-2 bg-red-500 text-white p-1 rounded-full"><Check size={12} /></div>
+                        </div>
+                        <div className="space-y-4 max-w-md">
+                          <h3 className="text-2xl font-black text-gray-900 tracking-tight">引擎已全新升级</h3>
+                          <p className="text-gray-500 text-sm leading-relaxed text-left">
+                            为了完美解决<b>「微信端强迫下载」</b>与<b>「企业内网打不开」</b>的历史难题，系统已启用第二代源头重塑技术。现在所有的 PDF 将以纯图片格式无脑通杀所有设备！
+                          </p>
+                          <div className="bg-yellow-50 border border-yellow-200 text-yellow-800 p-4 rounded-xl text-left text-sm font-medium shadow-inner">
+                            <span className="font-bold text-yellow-900">请执行最后一步以修复：</span><br/>
+                            1. 点击右上角的【管理文件资源】<br/>
+                            2. 找到此文件，点击删除垃圾桶<br/>
+                            3. 重新上传一次该 PDF<br/>
+                            系统将在浏览器端自动飞速转码，永绝后患。
+                          </div>
+                        </div>
+                      </div>
+                    );
                   }
                   
                   return (
