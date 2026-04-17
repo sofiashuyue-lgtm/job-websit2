@@ -10,3 +10,30 @@
     @apply antialiased;
   }
 }
+
+@layer utilities {
+  @media print {
+    .no-print {
+      display: none !important;
+    }
+    
+    body {
+      background-color: white !important;
+      color: black !important;
+    }
+
+    main {
+      padding-top: 0 !important;
+      padding-bottom: 0 !important;
+    }
+
+    section {
+      page-break-inside: avoid;
+      break-inside: avoid;
+    }
+
+    .print-only {
+      display: block !important;
+    }
+  }
+}
