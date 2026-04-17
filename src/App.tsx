@@ -179,173 +179,184 @@ function PDFRenderer({ url }: { url: string }) {
   const [numPages, setNumPages] = useState<number>();
   const [pageNumber, setPageNumber] = useState(1);
   const [scale, setScale] = useState(1.0);
-  const [pdfBlob, setPdfBlob] = useState<Blob | null>(null);
-  const [objectUrl, setObjectUrl] = useState<string | null>(null);
+  const [pdfData, setPdfData] = useState<Uint8Array | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [renderError, setRenderError] = useState(false);
   const [containerWidth, setContainerWidth] = useState<number>(0);
   const containerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    let currentUrl: string | null = null;
     async function fetchPdf() {
       try {
         setLoading(true);
         setError(null);
-        setRenderError(false);
-        const response = await fetch(url);
-        if (!response.ok) throw new Error('同步云端资源失败');
-        const blob = await response.blob();
         
-        // Create a blob URL that can be used by both react-pdf and iframe
-        const pdfBlobData = new Blob([blob], { type: 'application/pdf' });
-        currentUrl = URL.createObjectURL(pdfBlobData);
+        // Fetching as ArrayBuffer (Uint8Array) is more stable for PDF.js than Blobs in restricted browsers
+        const response = await fetch(url, {
+          headers: { 'Accept': 'application/pdf' }
+        });
         
-        setPdfBlob(pdfBlobData);
-        setObjectUrl(currentUrl);
+        if (!response.ok) throw new Error(`无法获取文件 (状态: ${response.status})`);
+        
+        const buffer = await response.arrayBuffer();
+        setPdfData(new Uint8Array(buffer));
       } catch (err: any) {
         console.error("PDF Fetch Error:", err);
-        setError(err.message || '加载失败');
+        setError(err.message || '网络连接受限，建议刷新重试');
       } finally {
         setLoading(false);
       }
     }
     fetchPdf();
-    
-    return () => {
-      if (currentUrl) URL.revokeObjectURL(currentUrl);
-    };
   }, [url]);
 
   useEffect(() => {
     const updateWidth = () => {
       if (containerRef.current) {
-        setContainerWidth(containerRef.current.clientWidth - 40);
+        // Leave some padding for the shadow and borders
+        setContainerWidth(Math.min(containerRef.current.clientWidth - 32, 1200));
       }
     };
+    
+    // Initial and periodic update to handle dynamic layouts
     updateWidth();
+    const interval = setInterval(updateWidth, 1000);
     window.addEventListener('resize', updateWidth);
-    return () => window.removeEventListener('resize', updateWidth);
-  }, [loading]);
+    
+    return () => {
+      window.removeEventListener('resize', updateWidth);
+      clearInterval(interval);
+    };
+  }, []);
 
   function onDocumentLoadSuccess({ numPages }: { numPages: number }) {
     setNumPages(numPages);
     setPageNumber(1);
-    setRenderError(false);
-  }
-
-  function onDocumentLoadError(err: any) {
-    console.error("PDF Render Error:", err);
-    setRenderError(true);
+    setError(null);
   }
 
   if (loading) {
     return (
-      <div className="w-full h-full flex flex-col items-center justify-center bg-gray-50 p-12 text-center">
+      <div className="w-full h-full flex flex-col items-center justify-center bg-gray-50/50 backdrop-blur-sm p-12 text-center">
         <motion.div 
           animate={{ rotate: 360 }}
-          transition={{ duration: 2, repeat: Infinity, ease: "linear" }}
-          className="w-12 h-12 border-4 border-blue-100 border-t-blue-600 rounded-full mb-6"
+          transition={{ duration: 1.5, repeat: Infinity, ease: "linear" }}
+          className="w-14 h-14 border-[3px] border-blue-100 border-t-blue-600 rounded-full mb-8 shadow-inner"
         />
-        <div className="space-y-2">
-          <p className="text-gray-900 font-bold text-sm tracking-widest">正在安全调取云端资源</p>
-          <p className="text-gray-400 text-[10px] uppercase tracking-widest text-center">已开启国内/内网专用加速模式</p>
+        <div className="space-y-3">
+          <p className="text-gray-900 font-bold text-base tracking-tight">正在极速载入高清资源</p>
+          <div className="flex flex-col gap-1 items-center">
+             <p className="text-gray-400 text-[10px] uppercase tracking-widest">已启用微信 PC/移动端专用离线渲染引擎</p>
+             <p className="text-blue-500/60 text-[9px] font-mono">Loading data into memory channel...</p>
+          </div>
         </div>
       </div>
     );
   }
 
-  if (error || !pdfBlob) {
+  if (error || !pdfData) {
     return (
       <div className="flex flex-col items-center justify-center h-full p-12 text-center bg-white">
-        <div className="w-16 h-16 bg-red-50 text-red-500 rounded-full flex items-center justify-center mb-6">
-          <X size={32} />
+        <div className="w-20 h-20 bg-red-50 text-red-500 rounded-3xl flex items-center justify-center mb-6 shadow-sm">
+          <FileText size={40} />
         </div>
-        <h3 className="text-lg font-bold text-gray-900 mb-2">预览暂时不可用</h3>
-        <p className="text-gray-500 text-xs mb-8 max-w-[240px]">由于网络波动或内网限制，无法直接下载。建议直接在新窗口尝试。</p>
+        <div className="max-w-xs space-y-3 mb-8">
+          <h3 className="text-xl font-bold text-gray-900">预览暂时受限</h3>
+          <p className="text-gray-500 text-sm leading-relaxed">由于内网或微信浏览器的安全策略，JS 渲染引擎被阻止开启。建议您点击下方按钮在新窗口尝试。</p>
+        </div>
         <a 
           href={url} 
           target="_blank" 
           rel="noopener noreferrer"
-          className="px-8 py-3 bg-gray-900 text-white rounded-xl text-xs font-bold hover:bg-black transition-all flex items-center gap-2"
+          className="px-10 py-4 bg-gray-900 text-white rounded-2xl text-sm font-bold hover:bg-black transition-all shadow-xl shadow-gray-200 active:scale-95 flex items-center gap-3"
         >
-          直接打开文件 <ExternalLink size={14} />
+          <span>在新窗口极速浏览</span>
+          <ExternalLink size={16} />
         </a>
       </div>
     );
   }
 
-  // If JS rendering fails (worker blocked), fall back to native browser viewer with the blob URL
-  if (renderError && objectUrl) {
-    return (
-      <div className="w-full h-full bg-white relative">
-        <iframe 
-          src={`${objectUrl}#toolbar=0&navpanes=0`} 
-          className="w-full h-full border-none"
-          title="Native PDF Preview"
-        />
-        <div className="absolute top-0 left-0 w-full p-2 bg-yellow-50 text-yellow-700 text-[10px] font-bold text-center border-b border-yellow-100 z-50">
-          ⚠️ JS 引擎加载受阻，正在切换至原生渲染模式
-        </div>
-      </div>
-    );
-  }
-
   return (
-    <div ref={containerRef} className="flex flex-col h-full bg-gray-100 overflow-hidden">
-      {/* Controls Bar */}
-      <div className="bg-white/95 backdrop-blur-xl border-b border-gray-100 p-2 flex items-center justify-between px-4 z-20 sticky top-0">
-        <div className="flex items-center gap-2">
+    <div ref={containerRef} className="flex flex-col h-full bg-[#f8f9fa] overflow-hidden select-none">
+      {/* Premium Controls Bar */}
+      <div className="bg-white/95 backdrop-blur-xl border-b border-gray-100 p-2.5 flex items-center justify-between px-6 z-30 sticky top-0 shadow-sm">
+        <div className="flex items-center gap-1.5 md:gap-4">
           <button 
             disabled={pageNumber <= 1}
             onClick={() => setPageNumber(p => p - 1)}
-            className="p-2 hover:bg-gray-100 rounded-lg disabled:opacity-30 transition-colors"
+            className="p-2.5 hover:bg-gray-100 rounded-xl disabled:opacity-20 transition-all active:scale-90"
           >
-            <ChevronRight className="rotate-180" size={18} />
+            <ChevronRight className="rotate-180 text-gray-700" size={20} />
           </button>
-          <span className="text-xs font-bold text-gray-600 min-w-[60px] text-center">
-            {pageNumber} / {numPages || '-'}
-          </span>
+          
+          <div className="flex items-center gap-1">
+             <span className="text-sm font-black text-gray-900 w-8 text-center">{pageNumber}</span>
+             <span className="text-xs font-medium text-gray-300">/</span>
+             <span className="text-xs font-bold text-gray-400 w-8 text-center">{numPages || '-'}</span>
+          </div>
+
           <button 
             disabled={pageNumber >= (numPages || 0)}
             onClick={() => setPageNumber(p => p + 1)}
-            className="p-2 hover:bg-gray-100 rounded-lg disabled:opacity-30 transition-colors"
+            className="p-2.5 hover:bg-gray-100 rounded-xl disabled:opacity-20 transition-all active:scale-90"
           >
-            <ChevronRight size={18} />
+            <ChevronRight className="text-gray-700" size={20} />
           </button>
         </div>
 
-        <div className="flex items-center gap-1 bg-gray-50 p-1 rounded-xl">
-          <button onClick={() => setScale(s => Math.max(0.5, s - 0.2))} className="p-1.5 hover:bg-white rounded-lg transition-colors"><X size={14} className="rotate-45" /></button>
-          <span className="text-[10px] font-bold text-gray-400 w-10 text-center">{Math.round(scale * 100)}%</span>
-          <button onClick={() => setScale(s => Math.min(3, s + 0.2))} className="p-1.5 hover:bg-white rounded-lg transition-colors"><Plus size={14} /></button>
+        {/* Zoom Controls (Hidden on narrow mobile screens) */}
+        <div className="hidden sm:flex items-center gap-1 bg-gray-50/80 p-1.5 rounded-2xl border border-gray-100">
+          <button onClick={() => setScale(s => Math.max(0.4, s - 0.2))} className="p-2 hover:bg-white rounded-xl transition-all"><X size={16} className="rotate-45 text-gray-400" /></button>
+          <span className="text-[11px] font-black text-gray-500 w-14 text-center tabular-nums">{Math.round(scale * 100)}%</span>
+          <button onClick={() => setScale(s => Math.min(4, s + 0.2))} className="p-2 hover:bg-white rounded-xl transition-all"><Plus size={16} className="text-gray-400" /></button>
+        </div>
+        
+        <div className="flex items-center">
+           <a href={url} target="_blank" rel="noreferrer" className="p-2 hover:bg-gray-100 rounded-xl text-gray-400 transition-colors">
+              <ExternalLink size={18} />
+           </a>
         </div>
       </div>
 
-      {/* Page Viewer */}
-      <div className="flex-1 overflow-auto p-4 md:p-8 flex justify-center">
+      {/* Page Viewer with Smooth Scrolling */}
+      <div className="flex-1 overflow-auto p-4 md:p-10 flex flex-col items-center scroll-smooth bg-gray-100/50">
         <Document
-          file={pdfBlob}
+          file={pdfData}
           onLoadSuccess={onDocumentLoadSuccess}
-          onLoadError={onDocumentLoadError}
-          loading={<div className="animate-pulse text-gray-400 text-xs mt-20">正在解析页面...</div>}
+          onLoadError={(err) => {
+            console.error("Document Load Error:", err);
+            setError("文件解析失败，可能是格式不支持");
+          }}
+          loading={
+            <div className="flex flex-col items-center mt-32 space-y-4">
+               <div className="w-10 h-1 border-t-2 border-blue-500 rounded animate-pulse" />
+               <p className="text-[10px] text-gray-400 uppercase font-black tracking-widest">初始化渲染图层...</p>
+            </div>
+          }
         >
-          <Page 
-            pageNumber={pageNumber} 
-            scale={scale}
-            width={containerWidth > 0 ? containerWidth : undefined}
-            className="shadow-2xl rounded-sm overflow-hidden"
-            renderTextLayer={false}
-            renderAnnotationLayer={false}
-          />
+          <motion.div
+            key={pageNumber}
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.3 }}
+          >
+            <Page 
+              pageNumber={pageNumber} 
+              scale={scale}
+              width={containerWidth > 0 ? containerWidth : undefined}
+              className="shadow-[0_20px_50px_rgba(0,0,0,0.1)] rounded-lg overflow-hidden border border-white/50"
+              renderTextLayer={false}
+              renderAnnotationLayer={false}
+              loading={<div className="bg-white/50 w-full aspect-[1/1.4] animate-pulse" />}
+            />
+          </motion.div>
         </Document>
       </div>
 
-      <div className="p-2 bg-white text-center border-t border-gray-100">
-         <p className="text-[9px] text-gray-300 font-bold uppercase tracking-widest">
-            {renderError ? "原生预览模式" : "JS 高清预览引擎 (国内加速中)"}
-         </p>
+      {/* Mobile Interaction Hint */}
+      <div className="md:hidden p-3 bg-gray-900 text-white text-center text-[9px] font-black uppercase tracking-[0.2em]">
+        左右点击上方箭头翻页 • 跨端离线模式
       </div>
     </div>
   );
